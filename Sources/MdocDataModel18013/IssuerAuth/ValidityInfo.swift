@@ -33,6 +33,20 @@ public struct ValidityInfo: Sendable {
 		case validUntil
 		case expectedUpdate
 	}
+	/// Upstream rejects any fractional seconds outright. With
+	/// `MdocValidationOptions.tolerateFractionalSecondsInValidityInfo` set the
+	/// fraction is trimmed instead, leaving the timezone designator in place:
+	/// `2026-09-02T10:22:33.123Z` becomes `2026-09-02T10:22:33Z`.
+	static func validatedDateTime(_ value: String, field: Keys) throws(MdocValidationError) -> String {
+		guard let dot = value.firstIndex(of: ".") else { return value }
+		guard MdocValidationOptions.tolerateFractionalSecondsInValidityInfo else {
+			throw .invalidDateTimeFormat("ValidityInfo", field.rawValue)
+		}
+		let afterDot = value[value.index(after: dot)...]
+		let timezone = afterDot.drop(while: \.isNumber)
+		return String(value[..<dot]) + String(timezone)
+	}
+
 	public init(signed: String, validFrom: String, validUntil: String, expectedUpdate: String? = nil) {
 		self.signed = signed
 		self.validFrom = validFrom
@@ -49,29 +63,25 @@ extension ValidityInfo: CBORDecodable {
 			  signedTag == .standardDateTimeString,
 			  case let .utf8String(signedValue) = signedCbor
 		else { throw .missingField("ValidityInfo", Keys.signed.rawValue) }
-		guard !signedValue.contains(".") else { throw .invalidDateTimeFormat("ValidityInfo", Keys.signed.rawValue) }
-		signed = signedValue
+		signed = try Self.validatedDateTime(signedValue, field: .signed)
 
 		guard case .tagged(let validFromTag, let validFromCbor) = validityInfoMap[Keys.validFrom],
 			  validFromTag == .standardDateTimeString,
 			  case let .utf8String(validFromValue) = validFromCbor
 		else { throw .missingField("ValidityInfo", Keys.validFrom.rawValue) }
-		guard !validFromValue.contains(".") else { throw .invalidDateTimeFormat("ValidityInfo", Keys.validFrom.rawValue) }
-		validFrom = validFromValue
+		validFrom = try Self.validatedDateTime(validFromValue, field: .validFrom)
 
 		guard case .tagged(let validUntilTag, let validUntilCbor) = validityInfoMap[Keys.validUntil],
 			  validUntilTag == .standardDateTimeString,
 			  case let .utf8String(validUntilValue) = validUntilCbor
 		else { throw .missingField("ValidityInfo", Keys.validUntil.rawValue) }
-		guard !validUntilValue.contains(".") else { throw .invalidDateTimeFormat("ValidityInfo", Keys.validUntil.rawValue) }
-		validUntil = validUntilValue
+		validUntil = try Self.validatedDateTime(validUntilValue, field: .validUntil)
 
 		if case .tagged(let expectedUpdateTag, let expectedUpdateCbor) = validityInfoMap[Keys.expectedUpdate],
 		   expectedUpdateTag == .standardDateTimeString,
 		   case let .utf8String(expectedUpdateValue) = expectedUpdateCbor
 		{
-			guard !expectedUpdateValue.contains(".") else { throw .invalidDateTimeFormat("ValidityInfo", Keys.expectedUpdate.rawValue) }
-			expectedUpdate = expectedUpdateValue
+			expectedUpdate = try Self.validatedDateTime(expectedUpdateValue, field: .expectedUpdate)
 		} else { expectedUpdate = nil }
 	}
 }
